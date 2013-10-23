@@ -178,6 +178,104 @@ err1:
   return rv;
 }
 
+/**
+ * Pass on to methods in http/cervlet.c to start/stop services
+ * @param S A service name as stated in the config file
+ * @param action A string describing the action to execute
+ * @param attempts Number of attemps (in case of "already action already in progres...")
+ * @return a string starting with "ERR" in for error, otherwise return "OK"
+ */
+char *control_service_daemon_message(const char *S, const char *action, int attempts) {
+  char *rv = NULL;
+  int status, content_length = 0;
+  Socket_T s;
+  char *auth;
+  char buf[STRLEN];
+  
+  ASSERT(S);
+  ASSERT(action);
+  
+  if (Util_getAction(action) == ACTION_IGNORE) {
+    return xstrdup("ERR1: invalid action");
+  }
+
+  auth = Util_getBasicAuthHeaderMonit();
+
+retry:
+  s = socket_new(Run.bind_addr ? Run.bind_addr : "localhost", Run.httpdport, SOCKET_TCP, Run.httpdssl, NET_TIMEOUT);
+  if (!s) {
+    FREE(auth);
+    return xstrdup("ERR2: cannot connect to the monit daemon");
+  }
+
+  /* Send request */
+  if (socket_print(s,
+        "POST /%s HTTP/1.0\r\n"
+        "Content-Type: application/x-www-form-urlencoded\r\n"
+        "Content-Length: %d\r\n"
+        "%s"
+        "\r\n"
+        "action=%s",
+        S,
+        strlen("action=") + strlen(action),
+        auth ? auth : "",
+        action) < 0) {
+    return xstrdup("ERR3: cannot send the command");
+    goto err1;
+  }
+
+  /* Process response */
+  if (! socket_readln(s, buf, STRLEN)) {
+    rv = xstrdup("ERR4: error receiving data");
+    goto err1;
+  }
+  Util_chomp(buf);
+  if (! sscanf(buf, "%*s %d", &status)) {
+    rv = xstrdup("ERR5: cannot parse status in response");
+    goto err1;
+  }
+  if (status >= 300) {
+    /* Skip headers */
+    while (socket_readln(s, buf, STRLEN)) {
+      if (! strncmp(buf, "\r\n", sizeof(buf)))
+        break;
+      if(Util_startsWith(buf, "Content-Length") && ! sscanf(buf, "%*s%*[: ]%d", &content_length)) {
+        rv = xstrdup("ERR6: error parsing headers");
+        goto err1;
+      }
+    }
+    if (content_length > 0 && content_length < 1024 && socket_readln(s, buf, STRLEN)) {
+      char token[] = "</h2>";
+      char *p = strstr(buf, token);
+
+      if (strlen(p) <= strlen(token)) {
+        rv = xstrdup("ERR7: error parsing body");
+        goto err1;
+      }
+      p += strlen(token);
+      rv = xcalloc(sizeof(unsigned char), content_length + 1 + 6);
+      snprintf(rv, content_length + 1 + 6, "ERR8: %s", p);
+      p = strstr(rv, "<p>");
+      if (p)
+        *p = 0;
+      attempts--;
+      if ((attempts > 0) && (strstr(rv, "please try again later") != NULL)) {
+          socket_free(&s);
+          /*LogInfo("%s: retrying %s %s (%s)\n", prog, action, S, rv);*/
+          LogInfo("%s: retrying %s %s\n", prog, action, S);
+          FREE(rv);
+          sleep(1);
+          goto retry;
+      }
+    }
+  } else
+    rv = xstrdup("OK");
+err1:
+  FREE(auth);
+  socket_free(&s);
+
+  return rv;
+}
 
 /**
  * Check to see if we should try to start/stop service
@@ -269,6 +367,7 @@ int control_service(const char *S, int A) {
       break;
 
     case ACTION_MONITOR:
+    case ACTION_MONITOR_UNLOCK:
       /* We only enable monitoring of this service and all prerequisite
        * services. Chain of services which depends on this service keep
        * its state */
@@ -276,10 +375,15 @@ int control_service(const char *S, int A) {
       break;
 
     case ACTION_UNMONITOR:
+    case ACTION_UNMONITOR_LOCK:
       /* We disable monitoring of this service and all services which
        * depends on it */
       do_depend(s, ACTION_UNMONITOR);
       do_unmonitor(s);
+      break;
+
+    case ACTION_LOCK:
+    case ACTION_UNLOCK:
       break;
 
     default:

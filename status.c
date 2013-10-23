@@ -80,7 +80,7 @@
 /**
  * Show all services in the service list.
  */
-int status(char *level) {
+int status(char *level, char *service) {
 
 #define LINE 1024
 
@@ -102,9 +102,14 @@ int status(char *level) {
   }
 
   auth= Util_getBasicAuthHeaderMonit();
-  socket_print(sock, 
-	       "GET /_status?format=text&level=%s HTTP/1.0\r\n%s\r\n",
-	       level, auth?auth:"");
+  if (service != NULL)
+      socket_print(sock, 
+           "GET /_status?format=text&level=%s&service=%s HTTP/1.0\r\n%s\r\n",
+           level, service, auth?auth:"");
+  else
+      socket_print(sock, 
+           "GET /_status?format=text&level=%s HTTP/1.0\r\n%s\r\n",
+           level, auth?auth:"");
   FREE(auth);
 
   /* Read past HTTP headers and check status */

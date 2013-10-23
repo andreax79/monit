@@ -102,7 +102,7 @@
 
 static void  do_init();                       /* Initialize this application */
 static void  do_reinit();           /* Re-initialize the runtime application */
-static void  do_action(char **);         /* Dispatch to the submitted action */
+static void  do_action(int, char **);    /* Dispatch to the submitted action */
 static void  do_exit();                                    /* Finalize monit */
 static void  do_default();                              /* Do default action */
 static void  handle_options(int, char **);         /* Handle program options */
@@ -128,7 +128,7 @@ pthread_t       heartbeatThread;               /**< M/Monit heartbeat thread */
 pthread_cond_t  heartbeatCond;                /**< Hearbeat wakeup condition */
 pthread_mutex_t heartbeatMutex;                          /**< Hearbeat mutex */
 
-char actionnames[][STRLEN]   = {"ignore", "alert", "restart", "stop", "exec", "unmonitor", "start", "monitor", ""};
+char actionnames[][STRLEN]   = {"ignore", "alert", "restart", "stop", "exec", "unmonitor", "start", "monitor", "lock", "unlock", "unmonitor_lock", "monitor_unlock", ""};
 char modenames[][STRLEN]     = {"active", "passive", "manual"};
 char checksumnames[][STRLEN] = {"UNKNOWN", "MD5", "SHA1"};
 char operatornames[][STRLEN] = {"greater than", "less than", "equal to", "not equal to"};
@@ -156,7 +156,7 @@ int main(int argc, char **argv) {
   handle_options(argc, argv);
  
   do_init();
-  do_action(argv); 
+  do_action(argc, argv); 
   do_exit();
 
   return 0;
@@ -384,7 +384,7 @@ static void do_reinit() {
 /**
  * Dispatch to the submitted action - actions are program arguments
  */
-static void do_action(char **args) {
+static void do_action(int argc, char **args) {
   char *action = args[optind];
   char *service = args[++optind];
 
@@ -396,6 +396,10 @@ static void do_action(char **args) {
              IS(action, "stop")      ||
              IS(action, "monitor")   ||
              IS(action, "unmonitor") ||
+             IS(action, "lock")      ||
+             IS(action, "unlock")    ||
+             IS(action, "monitor_unlock") ||
+             IS(action, "unmonitor_lock") ||
              IS(action, "restart")) {
     if (Run.mygroup || service) {
       int errors = 0;
@@ -433,13 +437,87 @@ static void do_action(char **args) {
       LogError("%s: please specify the configured service name or 'all' after %s\n", prog, action);
       exit(1);
     }
+  } else if (IS(action, "sync_start")     ||
+             IS(action, "sync_stop")      ||
+             IS(action, "sync_restart")) {
+    if (!exist_daemon()) {
+        LogError("%s: action failed -- daemon in not running\n", prog);
+        exit(1);
+      }
+    if (service) {
+      int errors = 0;
+      int found = 0;
+      int attempts = (optind + 1 < argc) ? atoi(args[++optind]) : 60;
+      Service_T s = NULL;
+      for (s = servicelist; s; s = s->next) {
+          if (IS(s->name, service)) {
+              found = 1;
+              char *ac = (IS(action, "sync_stop") || IS(action, "sync_restart")) ? "unmonitor_lock" : "lock";
+              char *msg = control_service_daemon_message(s->name, ac, attempts);
+              if (!IS(msg, "OK")) {
+                LogError("%s\n", strchr(msg, ':') + 2);
+                exit(1);
+              }
+              FREE(msg);
+
+              errors = control_service_string(service, action + 5) ? 0 : 1;
+              if (errors)
+                exit(1);
+              ac = (IS(action, "sync_start") || IS(action, "sync_restart")) ? "monitor_unlock" : "unlock";
+              msg = control_service_daemon_message(s->name, ac, attempts);
+              if (!IS(msg, "OK")) {
+                LogError("%s\n", strchr(msg, ':') + 2);
+                exit(1);
+              }
+              break;
+        }
+      }
+      if (!found) {
+        LogError("%s: action failed -- There is no service by that name\n", prog);
+        exit(1);
+      }
+      if (errors)
+        exit(1);
+    } else {
+      LogError("%s: please specify the configured service name after %s\n", prog, action);
+      exit(1);
+    }
+  } else if (IS(action, "sync_monitor")     ||
+             IS(action, "sync_unmonitor")) {
+    if (!exist_daemon()) {
+        LogError("%s: action failed -- daemon in not running\n", prog);
+        exit(1);
+      }
+    if (service) {
+      int found = 0;
+      int attempts = (optind + 1 < argc) ? atoi(args[++optind]) : 60;
+      Service_T s = NULL;
+      for (s = servicelist; s; s = s->next) {
+          if (IS(s->name, service)) {
+              char *msg = control_service_daemon_message(s->name, action + 5, attempts);
+              if (!IS(msg, "OK")) {
+                LogError("%s\n", strchr(msg, ':') + 2);
+                exit(1);
+              }
+              found = 1;
+              break;
+        }
+      }
+      if (!found) {
+        LogError("%s: action failed -- There is no service by that name\n", prog);
+        exit(1);
+      }
+    } else {
+      LogError("%s: please specify the configured service name after %s\n", prog, action);
+      exit(1);
+    }
   } else if (IS(action, "reload")) {
     LogInfo("Reinitializing monit daemon\n", prog);
     kill_daemon(SIGHUP);
   } else if (IS(action, "status")) {
-    status(LEVEL_NAME_FULL);
+    status(LEVEL_NAME_FULL, service);
   } else if (IS(action, "summary")) {
-    status(LEVEL_NAME_SUMMARY);
+    status(LEVEL_NAME_SUMMARY, service);
   } else if (IS(action, "quit")) {
     kill_daemon(SIGTERM);
   } else if (IS(action, "validate")) {
@@ -685,21 +763,26 @@ static void help() {
   printf(" -V            Print version number and patchlevel\n");
   printf(" -h            Print this text\n");
   printf("Optional action arguments for non-daemon mode are as follows:\n");
-  printf(" start all      - Start all services\n");
-  printf(" start name     - Only start the named service\n");
-  printf(" stop all       - Stop all services\n");
-  printf(" stop name      - Only stop the named service\n");
-  printf(" restart all    - Stop and start all services\n");
-  printf(" restart name   - Only restart the named service\n");
-  printf(" monitor all    - Enable monitoring of all services\n");
-  printf(" monitor name   - Only enable monitoring of the named service\n");
-  printf(" unmonitor all  - Disable monitoring of all services\n");
-  printf(" unmonitor name - Only disable monitoring of the named service\n");
-  printf(" reload         - Reinitialize monit\n");
-  printf(" status         - Print full status information for each service\n");
-  printf(" summary        - Print short status information for each service\n");
-  printf(" quit           - Kill monit daemon process\n");
-  printf(" validate       - Check all services and start if not running\n");
+  printf(" start all         - Start all services\n");
+  printf(" start name        - Only start the named service\n");
+  printf(" stop all          - Stop all services\n");
+  printf(" stop name         - Only stop the named service\n");
+  printf(" restart all       - Stop and start all services\n");
+  printf(" restart name      - Only restart the named service\n");
+  printf(" monitor all       - Enable monitoring of all services\n");
+  printf(" monitor name      - Only enable monitoring of the named service\n");
+  printf(" unmonitor all     - Disable monitoring of all services\n");
+  printf(" unmonitor name    - Only disable monitoring of the named service\n");
+  printf(" reload            - Reinitialize monit\n");
+  printf(" status [service]  - Print full status information for each service\n");
+  printf(" summary [service] - Print short status information for each service\n");
+  printf(" quit              - Kill monit daemon process\n");
+  printf(" validate          - Check all services and start if not running\n");
+  printf(" sync_start name [attempts]     - Sync start the named service\n");
+  printf(" sync_stop name [attempts]      - Sync stop the named service\n");
+  printf(" sync_restart name [attempts]   - Sync restart the named service\n");
+  printf(" sync_monitor name [attempts]   - Sync enable monitoring of the named service\n");
+  printf(" sync_unmonitor name [attempts] - Sync disable monitoring of the named service\n");
   printf("\n");
   printf("(Action arguments operate on services defined in the control file)\n");
 }
@@ -708,7 +791,7 @@ static void help() {
  * Print version information
  */
 static void version() {
-  printf("This is Monit version " VERSION "\n");
+  printf("This is Monit version " VERSION " with sync patch\n");
   printf("Copyright (C) 2000-2010 by Tildeslash Ltd.");
   printf(" All Rights Reserved.\n");
 }

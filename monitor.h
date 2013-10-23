@@ -86,7 +86,7 @@
 #include "socket.h"
 
 
-#define VERSION            PACKAGE_VERSION
+#define VERSION            PACKAGE_VERSION "E"
 #define MONITRC            "monitrc"
 #define TIMEFORMAT         "%Z %b %e %T"
 #define STRERROR            strerror(errno)
@@ -157,6 +157,10 @@
 #define ACTION_UNMONITOR   5
 #define ACTION_START       6
 #define ACTION_MONITOR     7
+#define ACTION_LOCK        8
+#define ACTION_UNLOCK      9
+#define ACTION_UNMONITOR_LOCK 10
+#define ACTION_MONITOR_UNLOCK 11
 
 #define TYPE_FILESYSTEM    0
 #define TYPE_DIRECTORY     1
@@ -761,6 +765,7 @@ typedef struct myservice {
   struct timeval     collected;                /**< When were data collected */
   int                doaction;          /**< Action scheduled by http thread */
   char               token[STRLEN];                        /**< Action token */
+  int                locked;
 
   /** Events */
   struct myevent {
@@ -907,10 +912,11 @@ int   parse(char *);
 int   control_service(const char *, int);
 int   control_service_string(const char *, const char *);
 int   control_service_daemon(const char *, const char *);
+char *control_service_daemon_message(const char*, const char *, int);
 void  setup_dependants();
 void  reset_depend();
 void  spawn(Service_T, Command_T, Event_T);
-int   status(char *);
+int   status(char *, char *);
 int   log_init();
 void  LogEmergency(const char *, ...);
 void  LogAlert(const char *, ...);

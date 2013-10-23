@@ -2032,7 +2032,7 @@ static void createservice(int type, char *name, char *value, int (*check)(Servic
   addeventaction(&(current)->action_ACTION,       ACTION_ALERT, ACTION_IGNORE);
   
   gettimeofday(&current->collected, NULL);
-
+  current->locked = FALSE;
 }
 
 

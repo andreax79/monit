@@ -605,7 +605,23 @@ static void handle_action(HttpRequest req, HttpResponse res) {
       send_error(res, SC_SERVICE_UNAVAILABLE, "Other action already in progress -- please try again later");
       return;
     }
-    s->doaction = doaction;
+    if (s->locked && (doaction != ACTION_UNLOCK) && (doaction != ACTION_MONITOR_UNLOCK)) {
+      send_error(res, SC_SERVICE_UNAVAILABLE, "Service locked -- please try again later");
+      return;
+    }
+    if (doaction == ACTION_LOCK) {
+      s->locked = TRUE;
+    } else if (doaction == ACTION_UNLOCK) {
+      s->locked = FALSE;
+    } else if (doaction == ACTION_MONITOR_UNLOCK) {
+      s->locked = FALSE;
+      s->doaction = ACTION_MONITOR;
+    } else if (doaction == ACTION_UNMONITOR_LOCK) {
+      s->locked = TRUE;
+      s->doaction = ACTION_UNMONITOR;
+    } else {
+      s->doaction = doaction;
+    }
     token = get_parameter(req, "token");
     if (token)
       snprintf(s->token, sizeof(s->token), "%s", token);
@@ -652,8 +668,23 @@ static void handle_do_action(HttpRequest req, HttpResponse res) {
           send_error(res, SC_SERVICE_UNAVAILABLE, "Other action already in progress -- please try again later");
           return;
         }
-
-        s->doaction = doaction;
+        if (s->locked && (doaction != ACTION_UNLOCK) && (doaction != ACTION_MONITOR_UNLOCK)) {
+          send_error(res, SC_SERVICE_UNAVAILABLE, "Service locked -- please try again later");
+          return;
+        }
+        if (doaction == ACTION_LOCK) {
+          s->locked = TRUE;
+        } else if (doaction == ACTION_UNLOCK) {
+          s->locked = FALSE;
+        } else if (doaction == ACTION_MONITOR_UNLOCK) {
+          s->locked = FALSE;
+          s->doaction = ACTION_MONITOR;
+        } else if (doaction == ACTION_UNMONITOR_LOCK)  {
+          s->locked = TRUE;
+          s->doaction = ACTION_UNMONITOR;
+        } else {
+          s->doaction = doaction;
+        }
         if (token)
           snprintf(s->token, sizeof(s->token), "%s", token);
 
@@ -2268,6 +2299,7 @@ static void print_status(HttpRequest req, HttpResponse res, int version)
   short level = LEVEL_FULL;
   const char *stringFormat = get_parameter(req, "format");
   const char *stringLevel = get_parameter(req, "level");
+  const char *service = get_parameter(req, "service");
 
   if(stringLevel && Util_startsWith(stringLevel, LEVEL_NAME_SUMMARY))
   {
@@ -2283,13 +2315,18 @@ static void print_status(HttpRequest req, HttpResponse res, int version)
   }
   else
   {
-    char *uptime = Util_getUptime(Util_getProcessUptime(Run.pidfile), " ");
-    out_print(res, "The Monit daemon %s uptime: %s\n\n", VERSION, uptime);
-    FREE(uptime);
+    if (service == NULL) {
+      char *uptime = Util_getUptime(Util_getProcessUptime(Run.pidfile), " ");
+      out_print(res, "The Monit daemon %s uptime: %s\n\n", VERSION, uptime);
+      FREE(uptime);
+    }
 
     for(s= servicelist_conf; s; s= s->next_conf)
     {
-      status_service_txt(s, res, level);
+      if (service == NULL)
+        status_service_txt(s, res, level);
+      else if (IS(s->name, service))
+        status_service_txt(s, res, level);
     }
     set_content_type(res, "text/plain");
   }
@@ -2466,6 +2503,7 @@ static void status_service_txt(Service_T s, HttpResponse res, short level) {
           systeminfo.total_swap_percent/10.);
       }
     }
+    out_print(res, "  %-33s %s\n", "locked", s->locked ? "locked" : "unlocked");
     ctime_r((const time_t *)&s->collected.tv_sec, time);
     out_print(res, "  %-33s %s\n", "data collected", time);
   }
