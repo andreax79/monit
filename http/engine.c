@@ -134,6 +134,8 @@ struct ulong_net {
   unsigned long mask;
 };
 
+static int myUnixServerSocket= 0;
+static volatile int stoppedUnix= FALSE;
 
 /* -------------------------------------------------------------- Prototypes */
 
@@ -661,7 +663,7 @@ static Socket_T socket_producer(int server, int port, void *sslserver) {
     goto error;
   }
   
-  if(! authenticate(in.sin_addr)) {
+  if((in.sin_family != AF_UNIX) && (! authenticate(in.sin_addr))) {
     goto error;
   }
 
@@ -691,5 +693,63 @@ static void destroy_host_allow(HostsAllow p) {
 
   FREE(a);
  
+}
+
+
+
+/* ------------------------------------------------------------- Unix Socket */
+
+
+/**
+ * Start the HTTPD server on unix socket
+ * @param backlog The maximum length of the incomming connection queue 
+ * @param bindAddr the socket path the server will bind to
+ */
+void start_httpd_unix(int backlog, char *socketPath) {
+
+  Socket_T S= NULL;
+
+  stoppedUnix= Run.stopped;
+
+  if((myUnixServerSocket= create_server_socket(0, backlog, socketPath)) < 0) {
+    
+    LogError("http server: Could not create a server socket at %s -- %s\n",
+	socketPath, STRERROR);
+    
+    LogError("monit HTTP server not available\n");
+    
+    if(Run.init) {
+      
+      sleep(1);
+      kill_daemon(SIGTERM);
+      
+    }
+    
+  } else {
+    
+    while(! stoppedUnix) {
+      
+      if(!(S= socket_producer(myUnixServerSocket, 0, NULL))) {
+           continue;
+      }
+
+      http_processor(S);
+      
+    }
+
+    close_socket(myUnixServerSocket);
+
+  }
+
+}
+
+
+/**
+ * Stop the HTTPD server on unix socket 
+ */
+void stop_httpd_unix() {
+
+  stoppedUnix = TRUE;
+
 }
 

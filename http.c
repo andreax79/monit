@@ -67,9 +67,11 @@
 
 /* Private prototypes */
 static void *thread_wrapper(void *arg);
+static void *thread_wrapper_unix(void *arg);
 
 /* The HTTP Thread */
 static pthread_t thread;
+static pthread_t threadUnix;
 
 static volatile int running = FALSE;
 
@@ -135,6 +137,17 @@ void monit_http(int action) {
       LogInfo("%s HTTP server stopped\n", prog);
       running = FALSE;
     }
+    
+    if (Run.bind_path) {
+      LogInfo("Shutting down %s server on %s\n", prog, Run.bind_path);
+      stop_httpd_unix();
+      if( (status= pthread_join(threadUnix, NULL)) != 0) {
+        LogError("%s: Failed to stop the server on %s. Thread error -- %s.\n",
+            prog, Run.bind_path, strerror(status));
+      } else {
+        LogInfo("%s server on %s stopped\n", prog, Run.bind_path);
+      }
+    }
     break;
 
   case START_HTTP:
@@ -147,6 +160,15 @@ void monit_http(int action) {
       LogInfo("%s HTTP server started\n", prog);
       running = TRUE;
     }
+    if (Run.bind_path) {
+      LogInfo("Starting %s server at %s\n", prog, Run.bind_path);
+      if( (status= pthread_create(&threadUnix, NULL, thread_wrapper_unix, NULL)) != 0) {
+        LogError("%s: Failed to create the server on %s. Thread error -- %s.\n",
+          prog, Run.bind_path, strerror(status));
+      } else {
+        LogInfo("%s server on %s started\n", prog, Run.bind_path);
+      }
+    }    
     break;
 
   default:
@@ -171,6 +193,19 @@ static void *thread_wrapper(void *arg) {
    * taken down gracefully by signaling the main monit thread */
   set_signal_block(&ns, NULL);
   start_httpd(Run.httpdport, 1024, Run.bind_addr);
+
+  return NULL;
+
+}
+
+static void *thread_wrapper_unix(void *arg) {
+
+  sigset_t ns;
+
+  /* Block collective signals in the http thread. The http server is
+   * taken down gracefully by signaling the main monit thread */
+  set_signal_block(&ns, NULL);
+  start_httpd_unix(1024, Run.bind_path);
 
   return NULL;
 

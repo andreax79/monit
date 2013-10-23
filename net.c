@@ -338,8 +338,11 @@ int create_unix_socket(const char *pathname, int timeout) {
     return -1;
   }
 
+  bzero(&unixsocket, sizeof(unixsocket));
   unixsocket.sun_family= AF_UNIX;
-  snprintf(unixsocket.sun_path, sizeof(unixsocket.sun_path), "%s", pathname);
+  snprintf(unixsocket.sun_path, sizeof(unixsocket.sun_path) - 1, "%s", pathname);
+  if (*unixsocket.sun_path == '@') /* abstract socket address */
+    *unixsocket.sun_path = '\0';
   
   if(! set_noblock(s)) {
     goto error;
@@ -375,6 +378,45 @@ int create_server_socket(int port, int backlog, const char *bindAddr) {
   int status;
   int flag = 1;
   struct sockaddr_in myaddr;
+  
+  if((bindAddr) && (strlen(bindAddr) > 0) && (bindAddr[0] == '/' || bindAddr[0] == '@')) { /* UNIX socket */
+    struct sockaddr_un serveraddr;
+
+    LogInfo("Starting %s HTTP server on socket %s\n", prog, bindAddr);
+    
+    if((s = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
+      LogError("%s: Cannot create unix socket -- %s\n", prog, STRERROR);
+      return -1;
+    }
+	
+    bzero(&serveraddr, sizeof(serveraddr));
+    serveraddr.sun_family = AF_UNIX;
+    snprintf(serveraddr.sun_path, sizeof(serveraddr.sun_path) - 1, "%s", bindAddr);
+    if (*serveraddr.sun_path == '@') /* abstract socket address */
+        *serveraddr.sun_path = '\0';
+
+    if(! set_noblock(s))
+      goto error;
+  
+    if(fcntl(s, F_SETFD, FD_CLOEXEC) == -1) {
+      LogError("%s: Cannot set close on exec option -- %s\n", prog, STRERROR);
+      goto error; 
+    }
+
+	unlink(bindAddr); /* Remove any old socket */
+    if(bind(s, (struct sockaddr *)&serveraddr, sizeof(struct sockaddr_in)) < 0) {
+      LogError("%s: Cannot bind -- %s\n", prog, STRERROR);
+      goto error;
+    }
+    chmod(bindAddr, 0600);
+  
+    if(listen(s, backlog) < 0) {
+      LogError("%s: Cannot listen -- %s\n", prog, STRERROR);
+      goto error;
+    }
+  
+    return s;
+  }
 
   if((s = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
     LogError("%s: Cannot create socket -- %s\n", prog, STRERROR);

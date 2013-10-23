@@ -170,6 +170,32 @@ Socket_T socket_create_t(const char *host, int port, int type, Ssl_T ssl,
   }
   ASSERT(timeout>0);
   
+  if ((host) && (strlen(host) >0) && (host[0] == '/' || host[0] == '@')) {
+    if((s= create_unix_socket(host, timeout)) != -1) {
+
+      Socket_T S= NULL;
+    
+      NEW(S);
+      S->socket= s;
+      S->length= 0;
+      S->offset= 0;
+      S->port= port;
+      S->type= proto;
+      S->timeout= timeout;
+      S->host= xstrdup(host);
+      S->connection_type= TYPE_LOCAL;
+    
+      if(ssl.use_ssl && !socket_switch2ssl(S, ssl)) {
+        socket_free(&S);
+        return NULL;
+      }
+    
+      return S;
+    }
+  
+    return NULL;
+  }
+  
   if((s= create_socket(host, port, proto, timeout)) != -1) {
     
     Socket_T S= NULL;

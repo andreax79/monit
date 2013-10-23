@@ -698,6 +698,7 @@ sigdisable      : SIGNATURE DISABLE
                 ;
 
 bindaddress     : ADDRESS STRING { Run.bind_addr = $2; }
+                | UNIXSOCKET PATH { Run.bind_path = $2; }
                 ;
 
 pemfile         : PEMFILE PATH {

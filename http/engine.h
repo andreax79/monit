@@ -58,5 +58,7 @@ int add_net_allow(char *);
 int has_hosts_allow();
 void destroy_hosts_allow();
 
+void start_httpd_unix(int backlog, char *socketPath);
+void stop_httpd_unix();
 
 #endif

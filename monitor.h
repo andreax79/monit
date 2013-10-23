@@ -106,7 +106,7 @@
 #define MYSTATEFILE        "monit.state"
 #define MYIDFILE           "monit.id"
 #define MYEVENTLISTBASE    "/var/monit"
-
+#define MYSOCKETPATH       "/var/run/monit"
 #define LOCALHOST          "localhost"
 
 #define SYNC_ATTEMPTS      120
@@ -833,6 +833,7 @@ struct myrun {
   int  facility;              /** The facility to use when running openlog() */
   int  doprocess;                 /**< TRUE if process status engine is used */
   char *bind_addr;                  /**< The address monit http will bind to */
+  char *bind_path;        /**< The unix socket path  monit http will bind to */
   volatile int  doreload;    /**< TRUE if a monit daemon should reinitialize */
   volatile int  dowakeup;  /**< TRUE if a monit daemon was wake up by signal */
   int  doaction;             /**< TRUE if some service(s) has action pending */

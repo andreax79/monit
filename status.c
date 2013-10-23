@@ -95,10 +95,18 @@ int status(char *level, char *service) {
     return status;
   }
 
-  if(!(sock= socket_new(Run.bind_addr?Run.bind_addr:"localhost", Run.httpdport,
-                        SOCKET_TCP, Run.httpdssl, NET_TIMEOUT))) {
-    LogError("%s: error connecting to the monit daemon\n", prog);
-    return status;
+  /* Try with the socket first */
+  if (Run.bind_path) {
+    sock= socket_new(Run.bind_path, 0, SOCKET_TCP, Run.httpdssl, NET_TIMEOUT);
+  }
+
+  /* Try network connection */
+  if (!sock) {
+    if(!(sock= socket_new(Run.bind_addr ? Run.bind_addr : "localhost", Run.httpdport,
+                            SOCKET_TCP, Run.httpdssl, NET_TIMEOUT))) {
+        LogError("%s: error connecting to the monit daemon\n", prog);
+        return status;
+    }
   }
 
   auth= Util_getBasicAuthHeaderMonit();

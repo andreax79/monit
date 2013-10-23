@@ -111,11 +111,19 @@ int control_service_daemon(const char *S, const char *action, int check_exit_sta
     LogError("%s: Cannot %s service '%s' -- invalid action %s\n", prog, action, S, action);
     return FALSE;
   }
-  
-  s = socket_new(Run.bind_addr ? Run.bind_addr : "localhost", Run.httpdport, SOCKET_TCP, Run.httpdssl, NET_TIMEOUT);
+
+  /* Try with the socket first */
+  if (Run.bind_path) {
+    s = socket_new(Run.bind_path, 0, SOCKET_TCP, Run.httpdssl, NET_TIMEOUT);
+  }
+
+  /* Try network connection */
   if (!s) {
-    LogError("%s: Cannot connect to the monit daemon. Did you start it with http support?\n", prog);
-    return FALSE;
+    if(!(s = socket_new(Run.bind_addr ? Run.bind_addr : "localhost", Run.httpdport,
+                            SOCKET_TCP, Run.httpdssl, NET_TIMEOUT))) {
+        LogError("%s: Cannot connect to the monit daemon. Did you start it with http support?\n", prog);
+        return FALSE;
+    }
   }
 
   /* Send request */
@@ -204,10 +212,18 @@ char *control_service_daemon_message(const char *S, const char *action, int atte
   auth = Util_getBasicAuthHeaderMonit();
 
 retry:
-  s = socket_new(Run.bind_addr ? Run.bind_addr : "localhost", Run.httpdport, SOCKET_TCP, Run.httpdssl, NET_TIMEOUT);
+  /* Try with the socket first */
+  if (Run.bind_path) {
+    s = socket_new(Run.bind_path, 0, SOCKET_TCP, Run.httpdssl, NET_TIMEOUT);
+  }
+
+  /* Try network connection */
   if (!s) {
-    FREE(auth);
-    return xstrdup("ERR2: cannot connect to the monit daemon");
+    if(!(s = socket_new(Run.bind_addr ? Run.bind_addr : "localhost", Run.httpdport,
+                            SOCKET_TCP, Run.httpdssl, NET_TIMEOUT))) {
+        FREE(auth);
+        return xstrdup("ERR2: cannot connect to the monit daemon");
+    }
   }
 
   /* Send request */

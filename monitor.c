@@ -153,6 +153,7 @@ int main(int argc, char **argv) {
   setlocale(LC_ALL, "C");
   prog = Util_basename(argv[0]);
   init_env();
+  Run.bind_path = MYSOCKETPATH;
   handle_options(argc, argv);
  
   do_init();
