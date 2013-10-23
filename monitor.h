@@ -109,6 +109,8 @@
 
 #define LOCALHOST          "localhost"
 
+#define SYNC_ATTEMPTS      120
+
 #define PORT_SMTP          25
 #define PORT_SMTPS         465
 #define PORT_HTTP          80
@@ -908,14 +910,21 @@ extern char sslnames[][STRLEN];
 
 /* FIXME: move remaining prototypes into seperate header-files */
 
+typedef struct spawn_result  {
+  int       exit_code;
+  pid_t     pid;
+} SpawnResult;
+
+void  destory_spawn_result(SpawnResult *);
+
 int   parse(char *);
-int   control_service(const char *, int);
-int   control_service_string(const char *, const char *);
-int   control_service_daemon(const char *, const char *);
-char *control_service_daemon_message(const char*, const char *, int);
+int   control_service(const char *, int, int);
+int   control_service_string(const char *, const char *, int);
+int   control_service_daemon(const char *, const char *, int);
+char *control_service_daemon_message(const char*, const char *, int, int);
 void  setup_dependants();
 void  reset_depend();
-void  spawn(Service_T, Command_T, Event_T);
+SpawnResult *spawn(Service_T, Command_T, Event_T, int);
 int   status(char *, char *);
 int   log_init();
 void  LogEmergency(const char *, ...);

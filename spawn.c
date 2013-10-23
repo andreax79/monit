@@ -73,11 +73,17 @@
 #include <fcntl.h>
 #endif
 
+#include <sys/mman.h>
+
 #include "event.h"
 #include "alert.h"
 #include "monitor.h"
 #include "engine.h"
 
+void destory_spawn_result(SpawnResult *result) {
+    if (result)
+        munmap(result, sizeof(SpawnResult));
+}
 
 /**
  *  Function for spawning of a process. This function fork's twice to
@@ -127,12 +133,13 @@ static void set_monit_environment(Service_T s, Command_T C, Event_T event, Envir
  * @param C A Command object
  * @param E An optional event object. May be NULL.
  */
-void spawn(Service_T S, Command_T C, Event_T E) {
+SpawnResult *spawn(Service_T S, Command_T C, Event_T E, int check_exit_status) {
   pid_t pid;
   sigset_t mask;
   sigset_t save;
   int stat_loc= 0;
   int exit_status;
+  SpawnResult *result = NULL;
   Environment_T environment= NULL;
 
   ASSERT(S);
@@ -140,7 +147,7 @@ void spawn(Service_T S, Command_T C, Event_T E) {
 
   if(access(C->arg[0], X_OK) != 0) {
     LogError("Error: Could not execute %s\n", C->arg[0]);
-    return;
+    return 0;
   }
 
   /*
@@ -152,9 +159,17 @@ void spawn(Service_T S, Command_T C, Event_T E) {
 
   set_monit_environment(S, C, E, &environment);
 
+  if (check_exit_status) {
+    result = mmap(NULL, sizeof(SpawnResult), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    result->pid = 0;
+    result->exit_code = -1;
+  }
+
   pid= fork();
   if(pid < 0) {
-    LogError("Cannot fork a new process\n");  
+    LogError("Cannot fork a new process\n");
+    if (result != NULL)
+        munmap(result, sizeof(SpawnResult));
     exit(1); 
   }
 
@@ -210,10 +225,30 @@ void spawn(Service_T S, Command_T C, Event_T E) {
       signal(SIGTERM, SIG_DFL);
       signal(SIGUSR1, SIG_DFL);
       signal(SIGPIPE, SIG_DFL);
-      
-      (void) execv(C->arg[0], C->arg);
+     
+      if (result == NULL) {
+          (void) execv(C->arg[0], C->arg);
+      } else {
+        int cstat_loc = 0;
+        pid_t cpid  = 0;
+        cpid = fork();
+        if (cpid < 0) {
+          result->pid = 0;
+          result->exit_code = 1;
+        }
+        if (cpid == 0) {
+          (void) execv(C->arg[0], C->arg);
+          _exit(1);
+        }
+        waitpid(cpid, &cstat_loc, 0);
+        result->exit_code = WEXITSTATUS(cstat_loc);
+      }
       _exit(1);
     }
+
+    /* Copy the child pid */
+    if (result != NULL)
+        result->pid = pid;
 
     /* Exit first child and return errors to parent */
     _exit(stat_loc);
@@ -246,7 +281,7 @@ void spawn(Service_T S, Command_T C, Event_T E) {
    * We do not need to wait for the second child since we forked twice,
    * the init system-process will wait for it. So we just return
    */
-
+  return result;
 } 
 
 

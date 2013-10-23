@@ -403,7 +403,7 @@ static void do_action(int argc, char **args) {
              IS(action, "restart")) {
     if (Run.mygroup || service) {
       int errors = 0;
-      int (*_control_service)(const char *, const char *) = exist_daemon() ? control_service_daemon : control_service_string;
+      int (*_control_service)(const char *, const char *, int) = exist_daemon() ? control_service_daemon : control_service_string;
 
       if (Run.mygroup) {
         ServiceGroup_T sg = NULL;
@@ -413,7 +413,7 @@ static void do_action(int argc, char **args) {
             ServiceGroupMember_T sgm = NULL;
 
             for (sgm = sg->members; sgm; sgm = sgm->next)
-              if (! _control_service(sgm->name, action))
+              if (! _control_service(sgm->name, action, FALSE))
                 errors++;
 
             break;
@@ -425,11 +425,11 @@ static void do_action(int argc, char **args) {
         for (s = servicelist; s; s = s->next) {
           if (s->visited)
             continue;
-          if (! _control_service(s->name, action))
+          if (! _control_service(s->name, action, FALSE))
               errors++;
         }
       } else {
-        errors = _control_service(service, action) ? 0 : 1;
+        errors = _control_service(service, action, FALSE) ? 0 : 1;
       }
       if (errors)
         exit(1);
@@ -453,22 +453,29 @@ static void do_action(int argc, char **args) {
           if (IS(s->name, service)) {
               found = 1;
               char *ac = (IS(action, "sync_stop") || IS(action, "sync_restart")) ? "unmonitor_lock" : "lock";
-              char *msg = control_service_daemon_message(s->name, ac, attempts);
+              char *msg = control_service_daemon_message(s->name, ac, attempts, FALSE);
               if (!IS(msg, "OK")) {
                 LogError("%s\n", strchr(msg, ':') + 2);
+                FREE(msg);
                 exit(1);
               }
               FREE(msg);
 
-              errors = control_service_string(service, action + 5) ? 0 : 1;
-              if (errors)
-                exit(1);
-              ac = (IS(action, "sync_start") || IS(action, "sync_restart")) ? "monitor_unlock" : "unlock";
-              msg = control_service_daemon_message(s->name, ac, attempts);
-              if (!IS(msg, "OK")) {
-                LogError("%s\n", strchr(msg, ':') + 2);
+              errors = control_service_string(s->name, action + 5, TRUE) ? 0 : 1;
+
+              if (errors) {
+                msg = control_service_daemon_message(s->name, "unlock", attempts, FALSE);
+                FREE(msg);
                 exit(1);
               }
+              ac = (IS(action, "sync_start") || IS(action, "sync_restart")) ? "monitor_unlock" : "unlock";
+              msg = control_service_daemon_message(s->name, ac, attempts, FALSE);
+              if (!IS(msg, "OK")) {
+                LogError("%s\n", strchr(msg, ':') + 2);
+                FREE(msg);
+                exit(1);
+              }
+              FREE(msg);
               break;
         }
       }
@@ -490,11 +497,11 @@ static void do_action(int argc, char **args) {
       }
     if (service) {
       int found = 0;
-      int attempts = (optind + 1 < argc) ? atoi(args[++optind]) : 60;
+      int attempts = (optind + 1 < argc) ? atoi(args[++optind]) : SYNC_ATTEMPTS;
       Service_T s = NULL;
       for (s = servicelist; s; s = s->next) {
           if (IS(s->name, service)) {
-              char *msg = control_service_daemon_message(s->name, action + 5, attempts);
+              char *msg = control_service_daemon_message(s->name, action + 5, attempts, FALSE);
               if (!IS(msg, "OK")) {
                 LogError("%s\n", strchr(msg, ':') + 2);
                 exit(1);

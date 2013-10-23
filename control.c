@@ -57,6 +57,8 @@
 #include <unistd.h>
 #endif
 
+#include <sys/wait.h>
+
 #include "monitor.h"
 #include "net.h"
 #include "socket.h"
@@ -81,8 +83,8 @@ static void do_start(Service_T);
 static int  do_stop(Service_T);
 static void do_monitor(Service_T);
 static void do_unmonitor(Service_T);
-static void wait_start(Service_T);
-static int  wait_stop(Service_T);
+static void wait_start(Service_T, SpawnResult *);
+static int  wait_stop(Service_T, SpawnResult *);
 static void do_depend(Service_T, int);
 
 
@@ -95,7 +97,7 @@ static void do_depend(Service_T, int);
  * @param action A string describing the action to execute
  * @return FALSE for error, otherwise TRUE
  */
-int control_service_daemon(const char *S, const char *action) {
+int control_service_daemon(const char *S, const char *action, int check_exit_status /* ignored */) {
   int rv = FALSE;
   int status, content_length = 0;
   Socket_T s;
@@ -185,7 +187,7 @@ err1:
  * @param attempts Number of attemps (in case of "already action already in progres...")
  * @return a string starting with "ERR" in for error, otherwise return "OK"
  */
-char *control_service_daemon_message(const char *S, const char *action, int attempts) {
+char *control_service_daemon_message(const char *S, const char *action, int attempts, int check_exit_status /* ignored */) {
   char *rv = NULL;
   int status, content_length = 0;
   Socket_T s;
@@ -283,7 +285,7 @@ err1:
  * @param A A string describing the action to execute
  * @return FALSE for error, otherwise TRUE
  */
-int control_service_string(const char *S, const char *A) {
+int control_service_string(const char *S, const char *A, int check_exit_status) {
   int a;
 
   ASSERT(S);
@@ -293,7 +295,7 @@ int control_service_string(const char *S, const char *A) {
     LogError("%s: service '%s' -- invalid action %s\n", prog, S, A);
     return FALSE;
   }
-  return control_service(S, a);
+  return control_service(S, a, check_exit_status);
 }
 
 
@@ -303,7 +305,7 @@ int control_service_string(const char *S, const char *A) {
  * @param A An action id describing the action to execute
  * @return FALSE for error, otherwise TRUE
  */
-int control_service(const char *S, int A) {
+int control_service(const char *S, int A, int check_exit_status) {
   Service_T s = NULL;
 
   ASSERT(S);
@@ -434,11 +436,13 @@ static void do_start(Service_T s) {
   }
   
   if (s->start && (s->type!=TYPE_PROCESS || !Util_isProcessRunning(s))) {
+    SpawnResult *result;
     LogInfo("'%s' start: %s\n", s->name, s->start->arg[0]);
-    spawn(s, s->start, NULL);
+    result = spawn(s, s->start, NULL, TRUE);
     /* We only wait for a process type, other service types does not have a pid file to watch */
     if (s->type == TYPE_PROCESS)
-      wait_start(s);
+      wait_start(s, result);
+    destory_spawn_result(result);
   }
   Util_monitorSet(s);
 }
@@ -464,13 +468,17 @@ static int do_stop(Service_T s) {
   } 
 
   if (s->stop && (s->type!=TYPE_PROCESS || Util_isProcessRunning(s))) {
+    SpawnResult *result;
     LogInfo("'%s' stop: %s\n", s->name, s->stop->arg[0]);
-    spawn(s, s->stop, NULL);
+    result = spawn(s, s->stop, NULL, TRUE);
     if (s->type == TYPE_PROCESS) {
       /* Only wait for process service types */
-      if (!wait_stop(s))
+      if (!wait_stop(s, result)) {
+        destory_spawn_result(result);
         return FALSE;
+      }
     }
+    destory_spawn_result(result);
   }
   Util_resetInfo(s);
 
@@ -562,7 +570,7 @@ static void do_depend(Service_T s, int action) {
  * posted to notify the user.
  * @param service A Service to wait for
  */
-static void wait_start(Service_T s) {
+static void wait_start(Service_T s, SpawnResult *spawn_result) {
   time_t timeout = time(NULL) + s->start->timeout;
   
   ASSERT(s);
@@ -570,6 +578,10 @@ static void wait_start(Service_T s) {
   while ((time(NULL) < timeout) && !Run.stopped) {
     if (Util_isProcessRunning(s))
       break;
+    if (spawn_result != NULL && spawn_result->exit_code > 0) {
+      LogError("%s start exit with code %d\n", s->name,  spawn_result->exit_code);
+      break;
+    }
     sleep(1);
   }
   
@@ -591,7 +603,7 @@ static void wait_start(Service_T s) {
  * @param service A Service to wait for
  * @return TRUE if the service was stopped otherwise FALSE
  */
-static int wait_stop(Service_T s) {
+static int wait_stop(Service_T s, SpawnResult *spawn_result) {
   time_t timeout = time(NULL) + s->stop->timeout;
   
   ASSERT(s);
@@ -599,6 +611,10 @@ static int wait_stop(Service_T s) {
   while ((time(NULL) < timeout) && !Run.stopped) {
     if (!Util_isProcessRunning(s))
       break;
+    if (spawn_result != NULL && spawn_result->exit_code > 0) {
+      LogError("%s stop exit with code %d\n", s->name,  spawn_result->exit_code);
+      break;
+    }
     sleep(1);
   }
 

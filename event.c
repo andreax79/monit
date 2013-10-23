@@ -709,7 +709,7 @@ static void handle_action(Event_T E, Action_T A) {
     return;
   } else if (A->id == ACTION_EXEC) {
     LogInfo("'%s' exec: %s\n", s->name, A->exec->arg[0]);
-    spawn(s, A->exec, E);
+    spawn(s, A->exec, E, FALSE);
     return;
   } else {
     if (s->actionratelist && (A->id == ACTION_START || A->id == ACTION_RESTART))
@@ -718,7 +718,7 @@ static void handle_action(Event_T E, Action_T A) {
     if (s->mode == MODE_PASSIVE && (A->id == ACTION_START || A->id == ACTION_STOP  || A->id == ACTION_RESTART))
       return;
 
-    control_service(s->name, A->id);
+    control_service(s->name, A->id, FALSE);
   }
 }
 
